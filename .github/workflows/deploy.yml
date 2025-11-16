@@ -326,20 +326,34 @@ jobs:
           Write-Host "Verifying Python installation..."
           & "$pythonHome\python.exe" --version
           
-          # Bootstrap pip if needed
+          # Bootstrap pip if needed (robust with exit code checks)
           Write-Host "Checking pip installation..."
-          try {
-            & "$pythonHome\python.exe" -m pip --version
-            Write-Host "pip is already available"
-          } catch {
+          & "$pythonHome\python.exe" -m pip --version *> $null
+          if ($LASTEXITCODE -ne 0) {
             Write-Host "pip not found, bootstrapping with ensurepip..."
-            & "$pythonHome\python.exe" -m ensurepip --upgrade
-            Write-Host "Upgrading pip, setuptools, and wheel..."
-            & "$pythonHome\python.exe" -m pip install --upgrade pip setuptools wheel
+            & "$pythonHome\python.exe" -m ensurepip --default-pip --upgrade
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "ensurepip failed (exit=$LASTEXITCODE), falling back to get-pip.py"
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+              $getPip = Join-Path $env:RUNNER_TEMP 'get-pip.py'
+              Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile $getPip -UseBasicParsing
+              & "$pythonHome\python.exe" $getPip
+              if ($LASTEXITCODE -ne 0) {
+                throw "get-pip.py failed with exit code $LASTEXITCODE"
+              }
+            }
+          } else {
+            Write-Host "pip is already available"
           }
+          
+          # Upgrade core tooling
+          Write-Host "Upgrading pip, setuptools, and wheel..."
+          & "$pythonHome\python.exe" -m pip install --upgrade pip setuptools wheel
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed with exit code $LASTEXITCODE" }
           
           # Verify pip is working
           & "$pythonHome\python.exe" -m pip --version
+          if ($LASTEXITCODE -ne 0) { throw "pip not available after bootstrap" }
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
