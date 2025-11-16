@@ -1,0 +1,211 @@
+name: Deploy DNS Secure Application
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - initial-setup
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout orchestrator repository
+        uses: actions/checkout@v4
+        with:
+          path: orchestrator
+
+      - name: Checkout backend repository
+        uses: actions/checkout@v4
+        with:
+          repository: RegevNir/dns-secure-backend
+          path: backend
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout frontend repository
+        uses: actions/checkout@v4
+        with:
+          repository: RegevNir/dns-secure-frontend
+          path: frontend
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\pypoetry\Cache
+            backend\.venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('backend/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            frontend\node_modules
+            ~\AppData\Local\npm-cache
+          key: ${{ runner.os }}-npm-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install Poetry
+        run: |
+          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
+      - name: Configure Poetry
+        working-directory: backend
+        run: poetry config virtualenvs.in-project true
+        shell: pwsh
+
+      - name: Verify Poetry installation
+        run: poetry --version
+        shell: pwsh
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          if (Test-Path ".venv") {
+            Write-Host "Virtual environment found, checking if dependencies are up to date..."
+            poetry install --no-interaction --no-ansi
+          } else {
+            Write-Host "No virtual environment found, installing dependencies from scratch..."
+            poetry install --no-interaction --no-ansi
+          }
+        shell: pwsh
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+        shell: pwsh
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+        shell: pwsh
+
+      - name: Start backend server
+        working-directory: backend
+        run: |
+          Start-Process pwsh -ArgumentList "-Command", "poetry run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000" -NoNewWindow
+          Write-Host "Waiting for backend to start..."
+          Start-Sleep -Seconds 10
+        shell: pwsh
+
+      - name: Test backend health endpoint
+        run: |
+          $maxRetries = 5
+          $retryCount = 0
+          $success = $false
+          
+          while (-not $success -and $retryCount -lt $maxRetries) {
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:8000/healthz" -UseBasicParsing
+              if ($response.StatusCode -eq 200) {
+                Write-Host "Backend health check passed!"
+                $success = $true
+              }
+            } catch {
+              $retryCount++
+              Write-Host "Health check attempt $retryCount failed, retrying..."
+              Start-Sleep -Seconds 5
+            }
+          }
+          
+          if (-not $success) {
+            Write-Error "Backend health check failed after $maxRetries attempts"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Test data ingestion endpoint
+        run: |
+          $body = @{
+            query_name = "example.com"
+            query_type = "A"
+            query_status = "NOERROR"
+            timestamp = (Get-Date).ToUniversalTime().ToString("o")
+            process_name = "test-process"
+            process_id = 1234
+          } | ConvertTo-Json
+          
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:8000/api/ingest/event" -Method POST -Body $body -ContentType "application/json" -UseBasicParsing
+            if ($response.StatusCode -eq 200) {
+              Write-Host "Data ingestion test passed!"
+              Write-Host "Response: $($response.Content)"
+            } else {
+              Write-Error "Data ingestion test failed with status code: $($response.StatusCode)"
+              exit 1
+            }
+          } catch {
+            Write-Error "Data ingestion test failed: $_"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Start frontend preview server
+        working-directory: frontend
+        run: |
+          Start-Process pwsh -ArgumentList "-Command", "npm run preview -- --host 0.0.0.0 --port 4173" -NoNewWindow
+          Write-Host "Waiting for frontend to start..."
+          Start-Sleep -Seconds 10
+        shell: pwsh
+
+      - name: Test frontend server
+        run: |
+          $maxRetries = 5
+          $retryCount = 0
+          $success = $false
+          
+          while (-not $success -and $retryCount -lt $maxRetries) {
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:4173" -UseBasicParsing
+              if ($response.StatusCode -eq 200) {
+                Write-Host "Frontend server test passed!"
+                $success = $true
+              }
+            } catch {
+              $retryCount++
+              Write-Host "Frontend test attempt $retryCount failed, retrying..."
+              Start-Sleep -Seconds 5
+            }
+          }
+          
+          if (-not $success) {
+            Write-Error "Frontend server test failed after $maxRetries attempts"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Deployment Summary
+        run: |
+          Write-Host "========================================="
+          Write-Host "DNS Secure Application Deployment Summary"
+          Write-Host "========================================="
+          Write-Host ""
+          Write-Host "✓ Backend API deployed and running on port 8000"
+          Write-Host "✓ Data ingestion endpoint tested successfully"
+          Write-Host "✓ Frontend built and deployed on port 4173"
+          Write-Host ""
+          Write-Host "All components deployed successfully!"
+        shell: pwsh
