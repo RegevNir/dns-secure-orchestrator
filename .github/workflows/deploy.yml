@@ -119,14 +119,14 @@ jobs:
           
           while (-not $success -and $retryCount -lt $maxRetries) {
             try {
-              $response = Invoke-WebRequest -Uri "http://localhost:8000/healthz" -UseBasicParsing
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:8000/healthz" -UseBasicParsing
               if ($response.StatusCode -eq 200) {
                 Write-Host "Backend health check passed!"
                 $success = $true
               }
             } catch {
               $retryCount++
-              Write-Host "Health check attempt $retryCount failed, retrying..."
+              Write-Host "Health check attempt $retryCount failed: $($_.Exception.Message)"
               Start-Sleep -Seconds 5
             }
           }
@@ -149,7 +149,7 @@ jobs:
           } | ConvertTo-Json
           
           try {
-            $response = Invoke-WebRequest -Uri "http://localhost:8000/api/ingest/event" -Method POST -Body $body -ContentType "application/json" -UseBasicParsing
+            $response = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/ingest/event" -Method POST -Body $body -ContentType "application/json" -UseBasicParsing
             if ($response.StatusCode -eq 200) {
               Write-Host "Data ingestion test passed!"
               Write-Host "Response: $($response.Content)"
@@ -158,7 +158,7 @@ jobs:
               exit 1
             }
           } catch {
-            Write-Error "Data ingestion test failed: $_"
+            Write-Error "Data ingestion test failed: $($_.Exception.Message)"
             exit 1
           }
         shell: pwsh
@@ -166,7 +166,7 @@ jobs:
       - name: Start frontend preview server
         working-directory: frontend
         run: |
-          Start-Process pwsh -ArgumentList "-Command", "npm run preview -- --host 0.0.0.0 --port 4173" -NoNewWindow
+          Start-Process pwsh -ArgumentList "-Command", "npm run preview -- --host 127.0.0.1 --port 4173" -NoNewWindow
           Write-Host "Waiting for frontend to start..."
           Start-Sleep -Seconds 10
         shell: pwsh
@@ -179,14 +179,14 @@ jobs:
           
           while (-not $success -and $retryCount -lt $maxRetries) {
             try {
-              $response = Invoke-WebRequest -Uri "http://localhost:4173" -UseBasicParsing
+              $response = Invoke-WebRequest -Uri "http://127.0.0.1:4173" -UseBasicParsing
               if ($response.StatusCode -eq 200) {
                 Write-Host "Frontend server test passed!"
                 $success = $true
               }
             } catch {
               $retryCount++
-              Write-Host "Frontend test attempt $retryCount failed, retrying..."
+              Write-Host "Frontend test attempt $retryCount failed: $($_.Exception.Message)"
               Start-Sleep -Seconds 5
             }
           }
