@@ -234,33 +234,84 @@ jobs:
           path: frontend
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Python 3.12 (custom directory)
+      - name: Install Python 3.12 (system-wide)
         run: |
           $pythonVersion = "3.12.10"
           $pythonInstaller = "python-$pythonVersion-amd64.exe"
           $installerPath = Join-Path $env:RUNNER_TEMP $pythonInstaller
-          $pythonHome = Join-Path $env:RUNNER_TEMP "Python312"
           
-          # Check if Python is already installed
-          if (Test-Path "$pythonHome\python.exe") {
-            Write-Host "Python 3.12 is already installed at $pythonHome"
-            $version = & "$pythonHome\python.exe" --version
-            Write-Host "Installed version: $version"
-          } else {
+          # Try to find existing Python installation
+          $pythonHome = $null
+          $possiblePaths = @(
+            "C:\Program Files\Python312",
+            "C:\Program Files (x86)\Python312"
+          )
+          
+          foreach ($path in $possiblePaths) {
+            if (Test-Path "$path\python.exe") {
+              $pythonHome = $path
+              Write-Host "Found existing Python 3.12 at $pythonHome"
+              break
+            }
+          }
+          
+          if (-not $pythonHome) {
             Write-Host "Downloading Python $pythonVersion installer..."
             # Force TLS 1.2 for older Windows PowerShell
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$pythonVersion/$pythonInstaller" -OutFile $installerPath -UseBasicParsing
             
-            Write-Host "Installing Python $pythonVersion to $pythonHome..."
-            Start-Process -FilePath $installerPath -ArgumentList "/quiet","InstallAllUsers=0","PrependPath=0","Include_pip=1","DefaultJustForMeTargetDir=$pythonHome","TargetDir=$pythonHome" -Wait -NoNewWindow
+            Write-Host "Installing Python $pythonVersion (system-wide)..."
+            # Run installer directly (not via Start-Process) to ensure proper completion
+            & $installerPath /quiet InstallAllUsers=1 Include_pip=1 PrependPath=0
+            $exitCode = $LASTEXITCODE
+            Write-Host "Installer exit code: $exitCode"
             
-            # Verify installation succeeded
-            if (-not (Test-Path "$pythonHome\python.exe")) {
-              Write-Error "Python installation failed - python.exe not found at $pythonHome"
-              Write-Host "Checking if Python was installed to a different location..."
-              Write-Host "Contents of RUNNER_TEMP:"
-              Get-ChildItem $env:RUNNER_TEMP -Directory | Select-Object Name
+            # Poll for installation completion (up to 2 minutes)
+            Write-Host "Waiting for Python installation to complete..."
+            $maxWaitSeconds = 120
+            $waitedSeconds = 0
+            $found = $false
+            
+            while ($waitedSeconds -lt $maxWaitSeconds) {
+              Start-Sleep -Seconds 5
+              $waitedSeconds += 5
+              
+              # Check standard installation paths
+              foreach ($path in $possiblePaths) {
+                if (Test-Path "$path\python.exe") {
+                  $pythonHome = $path
+                  $found = $true
+                  Write-Host "Python installation detected at $pythonHome after $waitedSeconds seconds"
+                  break
+                }
+              }
+              
+              if ($found) { break }
+              
+              # Try registry lookup
+              try {
+                $regPath = "HKLM:\SOFTWARE\Python\PythonCore\3.12\InstallPath"
+                if (Test-Path $regPath) {
+                  $pythonHome = (Get-ItemProperty $regPath).'(default)'
+                  if ($pythonHome -and (Test-Path "$pythonHome\python.exe")) {
+                    $found = $true
+                    Write-Host "Python installation found via registry at $pythonHome"
+                    break
+                  }
+                }
+              } catch {
+                # Registry lookup failed, continue polling
+              }
+              
+              Write-Host "Still waiting... ($waitedSeconds/$maxWaitSeconds seconds)"
+            }
+            
+            if (-not $found) {
+              Write-Error "Python installation failed - python.exe not found after $maxWaitSeconds seconds"
+              Write-Host "Checked paths: $($possiblePaths -join ', ')"
+              Write-Host "Trying where.exe python..."
+              where.exe python
               exit 1
             }
             
