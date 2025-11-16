@@ -233,18 +233,12 @@ jobs:
           path: frontend
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Python 3.12 (per-user)
+      - name: Install Python 3.12 (custom directory)
         run: |
           $pythonVersion = "3.12.10"
           $pythonInstaller = "python-$pythonVersion-amd64.exe"
-          $installerPath = "$env:RUNNER_TEMP\$pythonInstaller"
-          
-          # Handle missing LOCALAPPDATA by falling back to USERPROFILE
-          $localAppData = $env:LOCALAPPDATA
-          if (-not $localAppData) {
-            $localAppData = Join-Path $env:USERPROFILE "AppData\Local"
-          }
-          $pythonHome = Join-Path $localAppData "Programs\Python\Python312"
+          $installerPath = Join-Path $env:RUNNER_TEMP $pythonInstaller
+          $pythonHome = Join-Path $env:RUNNER_TEMP "Python312"
           
           # Check if Python is already installed
           if (Test-Path "$pythonHome\python.exe") {
@@ -257,16 +251,19 @@ jobs:
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$pythonVersion/$pythonInstaller" -OutFile $installerPath -UseBasicParsing
             
-            Write-Host "Installing Python $pythonVersion (per-user, silent)..."
-            Start-Process -FilePath $installerPath -ArgumentList "/quiet","InstallAllUsers=0","PrependPath=0","Include_pip=1" -Wait -NoNewWindow
+            Write-Host "Installing Python $pythonVersion to $pythonHome..."
+            Start-Process -FilePath $installerPath -ArgumentList "/quiet","InstallAllUsers=0","PrependPath=0","Include_pip=1","DefaultJustForMeTargetDir=$pythonHome","TargetDir=$pythonHome" -Wait -NoNewWindow
             
             # Verify installation succeeded
             if (-not (Test-Path "$pythonHome\python.exe")) {
               Write-Error "Python installation failed - python.exe not found at $pythonHome"
+              Write-Host "Checking if Python was installed to a different location..."
+              Write-Host "Contents of RUNNER_TEMP:"
+              Get-ChildItem $env:RUNNER_TEMP -Directory | Select-Object Name
               exit 1
             }
             
-            Write-Host "Python installation complete"
+            Write-Host "Python installation complete at $pythonHome"
           }
           
           # Add Python to PATH for this job
@@ -274,6 +271,7 @@ jobs:
           echo "$pythonHome\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           
           # Verify installation
+          Write-Host "Verifying Python installation..."
           & "$pythonHome\python.exe" --version
           & "$pythonHome\Scripts\pip.exe" --version
 
