@@ -209,6 +209,9 @@ jobs:
   deploy-self-hosted:
     runs-on: [self-hosted, windows]
     continue-on-error: true
+    defaults:
+      run:
+        shell: powershell
     
     steps:
       - name: Checkout orchestrator repository
@@ -235,7 +238,13 @@ jobs:
           $pythonVersion = "3.12.10"
           $pythonInstaller = "python-$pythonVersion-amd64.exe"
           $installerPath = "$env:RUNNER_TEMP\$pythonInstaller"
-          $pythonHome = "$env:LOCALAPPDATA\Programs\Python\Python312"
+          
+          # Handle missing LOCALAPPDATA by falling back to USERPROFILE
+          $localAppData = $env:LOCALAPPDATA
+          if (-not $localAppData) {
+            $localAppData = Join-Path $env:USERPROFILE "AppData\Local"
+          }
+          $pythonHome = Join-Path $localAppData "Programs\Python\Python312"
           
           # Check if Python is already installed
           if (Test-Path "$pythonHome\python.exe") {
@@ -244,10 +253,18 @@ jobs:
             Write-Host "Installed version: $version"
           } else {
             Write-Host "Downloading Python $pythonVersion installer..."
+            # Force TLS 1.2 for older Windows PowerShell
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$pythonVersion/$pythonInstaller" -OutFile $installerPath -UseBasicParsing
             
             Write-Host "Installing Python $pythonVersion (per-user, silent)..."
             Start-Process -FilePath $installerPath -ArgumentList "/quiet","InstallAllUsers=0","PrependPath=0","Include_pip=1" -Wait -NoNewWindow
+            
+            # Verify installation succeeded
+            if (-not (Test-Path "$pythonHome\python.exe")) {
+              Write-Error "Python installation failed - python.exe not found at $pythonHome"
+              exit 1
+            }
             
             Write-Host "Python installation complete"
           }
@@ -259,7 +276,6 @@ jobs:
           # Verify installation
           & "$pythonHome\python.exe" --version
           & "$pythonHome\Scripts\pip.exe" --version
-        shell: pwsh
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
