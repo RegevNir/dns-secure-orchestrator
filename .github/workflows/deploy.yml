@@ -325,7 +325,21 @@ jobs:
           # Verify installation
           Write-Host "Verifying Python installation..."
           & "$pythonHome\python.exe" --version
-          & "$pythonHome\Scripts\pip.exe" --version
+          
+          # Bootstrap pip if needed
+          Write-Host "Checking pip installation..."
+          try {
+            & "$pythonHome\python.exe" -m pip --version
+            Write-Host "pip is already available"
+          } catch {
+            Write-Host "pip not found, bootstrapping with ensurepip..."
+            & "$pythonHome\python.exe" -m ensurepip --upgrade
+            Write-Host "Upgrading pip, setuptools, and wheel..."
+            & "$pythonHome\python.exe" -m pip install --upgrade pip setuptools wheel
+          }
+          
+          # Verify pip is working
+          & "$pythonHome\python.exe" -m pip --version
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
