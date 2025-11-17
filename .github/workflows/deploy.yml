@@ -102,7 +102,8 @@ jobs:
       - name: Start backend server
         working-directory: backend
         run: |
-          Start-Process pwsh -ArgumentList "-Command", "poetry run fastapi dev app/main.py --host 0.0.0.0 --port 8000" -NoNewWindow
+          $env:PYTHONIOENCODING = "utf-8"
+          Start-Process pwsh -ArgumentList "-Command", "`$env:PYTHONIOENCODING='utf-8'; poetry run fastapi dev app/main.py --host 0.0.0.0 --port 8000" -NoNewWindow
           Write-Host "Waiting for backend to start..."
           Start-Sleep -Seconds 10
         shell: pwsh
